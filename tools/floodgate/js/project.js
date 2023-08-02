@@ -131,7 +131,15 @@ function getStatusData(projectJson, field) {
   const lastRun = actionData[actionData.length - 1]['End Timestamp'];
   const failedPages = actionData[actionData.length - 1]['Failed Pages'];
   const failedPreviews = actionData[actionData.length - 1]['Failed Previews'];
-  const status = (failedPages.length > 0 || failedPreviews.length > 0)
+  let status;
+  if (field === 'deletestatus') {
+    const failedDeletes = actionData[actionData.length - 1]['Failed Deletes'];
+    status = (failedDeletes.length > 0)
+      ? PROJECT_STATUS.COMPLETED_WITH_ERROR
+      : PROJECT_STATUS.COMPLETED;
+    return { lastRun, status, failedDeletes };
+  }
+  status = (failedPages.length > 0 || failedPreviews.length > 0)
     ? PROJECT_STATUS.COMPLETED_WITH_ERROR
     : PROJECT_STATUS.COMPLETED;
   return { lastRun, status };
@@ -156,4 +164,6 @@ export {
   updateProjectWithDocs,
   purgeAndReloadProjectFile,
   updateProjectStatus,
+  getStatusData,
+  PROJECT_STATUS,
 };

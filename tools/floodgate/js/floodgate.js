@@ -3,10 +3,14 @@ import { loadingOFF, loadingON } from '../../loc/utils.js';
 import { getParams, postData } from './utils.js';
 import { enableRetry, connect as connectToSP, getAccessToken } from '../../loc/sharepoint.js';
 import updateFragments from '../../loc/fragments.js';
+import { deleteAll } from './delete.js';
+import { readProjectFile } from '../../loc/project.js';
 import {
   initProject,
   updateProjectWithDocs,
   purgeAndReloadProjectFile,
+  getStatusData,
+  PROJECT_STATUS,
 } from './project.js';
 import {
   updateProjectInfo,
@@ -32,6 +36,11 @@ async function triggerUpdateFragments() {
   loadingON(status);
 }
 
+async function deleteFilesInProject() {
+  loadingON('Fetching and deleting files in project..');
+  await deleteAll();
+}
+
 async function promoteContentAction(project, config) {
   const params = getParams(project, config);
   params.spToken = getAccessToken();
@@ -53,7 +62,23 @@ async function fetchStatusAction(project, config) {
   // fetch promote status
   params = { projectRoot: config.sp.fgRootFolder };
   const promoteStatus = await postData(config.sp.aioStatusAction, params);
-  updateProjectStatusUI({ copyStatus, promoteStatus });
+  const projectFile = await initProject();
+  const projectJson = await readProjectFile(projectFile.url);
+  const defaultData = { lastRun: '-', status: PROJECT_STATUS.NOT_STARTED, failedDeletes: 0 };
+  let getStatus;
+  let deleteStatus;
+  if (projectJson.deletestatus.total !== 0) {
+    getStatus = getStatusData(projectJson, 'deletestatus');
+    deleteStatus = { type: 'deleteAction', status: getStatus.status, startTime: getStatus.lastRun };
+    deleteStatus.message = (getStatus.failedDeletes.length > 0)
+      ? 'Error occurred when deleting floodgated content. Check project excel sheet for additional information<br/><br/>'
+      : 'Deleted floodgate tree successfully.';
+  } else {
+    getStatus = defaultData;
+    deleteStatus = { type: 'deleteAction', status: getStatus.status, startTime: getStatus.lastRun };
+    deleteStatus.message = '-';
+  }
+  updateProjectStatusUI({ copyStatus, promoteStatus, deleteStatus });
 }
 
 async function refreshPage(config, projectDetail, project) {
@@ -87,6 +112,11 @@ function setListeners(project, config) {
     floodgateContentAction(project, config);
     target.removeEventListener('click', handleFloodgateConfirm);
   };
+  const handleDeleteConfirm = ({ target }) => {
+    modal.style.display = 'none';
+    deleteFilesInProject();
+    target.removeEventListener('click', handleDeleteConfirm);
+  };
   const handlePromoteConfirm = ({ target }) => {
     modal.style.display = 'none';
     promoteContentAction(project, config);
@@ -99,6 +129,11 @@ function setListeners(project, config) {
     document.querySelector('#fg-modal #yes-btn').addEventListener('click', handleFloodgateConfirm);
   });
   document.querySelector('#updateFragments button').addEventListener('click', triggerUpdateFragments);
+  document.querySelector('#delete button').addEventListener('click', (e) => {
+    modal.getElementsByTagName('p')[0].innerText = `Confirm to ${e.target.textContent}`;
+    modal.style.display = 'block';
+    document.querySelector('#fg-modal #yes-btn').addEventListener('click', handleDeleteConfirm);
+  });
   document.querySelector('#promoteFiles button').addEventListener('click', (e) => {
     modal.getElementsByTagName('p')[0].innerText = `Confirm to ${e.target.textContent}`;
     modal.style.display = 'block';

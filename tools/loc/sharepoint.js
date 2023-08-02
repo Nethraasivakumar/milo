@@ -524,4 +524,5 @@ export {
   fetchWithRetry,
   getFileNameFromPath,
   getFolderFromPath,
+  deleteFile,
 };
