@@ -1,11 +1,19 @@
 /* eslint-disable no-console */
-let utils;
+import {
+  createTag, getConfig, loadIms, loadLink, loadScript, updateConfig,
+} from '../../utils/utils.js';
 
 const CLASS_EL_DELETE = 'p13n-deleted';
 const CLASS_EL_REPLACE = 'p13n-replaced';
+const LS_ENT_KEY = 'milo:entitlements';
+const LS_ENT_EXPIRE_KEY = 'milo:entitlements:expire';
+const ENT_CACHE_EXPIRE = 1000 * 60 * 60 * 3; // 3 hours
+const ENT_CACHE_REFRESH = 1000 * 60 * 3; // 3 minutes
 const PAGE_URL = new URL(window.location.href);
 
+/* c8 ignore start */
 export const PERSONALIZATION_TAGS = {
+  all: () => true,
   chrome: () => navigator.userAgent.includes('Chrome') && !navigator.userAgent.includes('Mobile'),
   firefox: () => navigator.userAgent.includes('Firefox') && !navigator.userAgent.includes('Mobile'),
   android: () => navigator.userAgent.includes('Android'),
@@ -16,8 +24,17 @@ export const PERSONALIZATION_TAGS = {
   lightmode: () => !PERSONALIZATION_TAGS.darkmode(),
 };
 
+export const ENTITLEMENT_TAGS = {
+  photoshop: (ents) => ents.photoshop_cc,
+  lightroom: (ents) => ents.lightroom_cc,
+};
+/* c8 ignore stop */
+
+const personalizationKeys = Object.keys(PERSONALIZATION_TAGS);
+const entitlementKeys = Object.keys(ENTITLEMENT_TAGS);
+
 // Replace any non-alpha chars except comma, space and hyphen
-const RE_KEY_REPLACE = /[^a-z0-9\- ,=]/g;
+const RE_KEY_REPLACE = /[^a-z0-9\- _,=]/g;
 
 const MANIFEST_KEYS = [
   'action',
@@ -33,21 +50,22 @@ const DATA_TYPE = {
 };
 
 const createFrag = (url, manifestId) => {
-  const a = utils.createTag('a', { href: url }, url);
+  const a = createTag('a', { href: url }, url);
   if (manifestId) a.dataset.manifestId = manifestId;
-  const p = utils.createTag('p', undefined, a);
-  utils.loadLink(`${url}.plain.html`, { as: 'fetch', crossorigin: 'anonymous', rel: 'preload' });
+  const p = createTag('p', undefined, a);
+  loadLink(`${url}.plain.html`, { as: 'fetch', crossorigin: 'anonymous', rel: 'preload' });
   return p;
 };
 
 const COMMANDS = {
   insertcontentafter: (el, target, manifestId) => el
     .insertAdjacentElement('afterend', createFrag(target, manifestId)),
-  insertcontentbefore: (el, target, manifestId) => el.insertAdjacentElement('beforebegin', createFrag(target, manifestId)),
+  insertcontentbefore: (el, target, manifestId) => el
+    .insertAdjacentElement('beforebegin', createFrag(target, manifestId)),
   removecontent: (el, target, manifestId) => {
     if (target === 'false') return;
     if (manifestId) {
-      const div = utils.createTag('div', { 'data-removed-manifest-id': manifestId });
+      const div = createTag('div', { 'data-removed-manifest-id': manifestId });
       el.insertAdjacentElement('beforebegin', div);
     }
     el.classList.add(CLASS_EL_DELETE);
@@ -73,11 +91,16 @@ const fetchData = async (url, type = DATA_TYPE.JSON) => {
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
-      throw new Error('Invalid response', resp);
+      /* c8 ignore next 5 */
+      if (resp.status === 404) {
+        throw new Error('File not found');
+      }
+      throw new Error(`Invalid response: ${resp.status} ${resp.statusText}`);
     }
     return await resp[type]();
   } catch (e) {
-    console.log(`Error loading content: ${url}`, e);
+    /* c8 ignore next 3 */
+    console.log(`Error loading content: ${url}`, e.message || e);
   }
   return null;
 };
@@ -89,6 +112,7 @@ const consolidateObjects = (arr, prop) => arr.reduce((propMap, item) => {
   return propMap;
 }, {});
 
+/* c8 ignore start */
 function normalizePath(p) {
   let path = p;
 
@@ -96,7 +120,7 @@ function normalizePath(p) {
     return path;
   }
 
-  const config = utils.getConfig();
+  const config = getConfig();
 
   if (path.startsWith(config.codeRoot)
     || path.includes('.hlx.')
@@ -126,17 +150,7 @@ export async function replaceInner(path, element) {
   element.innerHTML = html;
   return true;
 }
-
-const checkForParamMatch = (paramStr) => {
-  const [name, val] = paramStr.split('param-')[1].split('=');
-  if (!name) return false;
-  const searchParamVal = PAGE_URL.searchParams.get(name);
-  if (searchParamVal !== null) {
-    if (val) return val === searchParamVal;
-    return true; // if no val is set, just check for existence of param
-  }
-  return false;
-};
+/* c8 ignore stop */
 
 const setMetadata = (metadata) => {
   const { selector, val } = metadata;
@@ -176,6 +190,7 @@ function handleCommands(commands, manifestId, rootEl = document) {
 
       COMMANDS[cmd.action](selectorEl, cmd.target, manifestId);
     } else {
+      /* c8 ignore next 2 */
       console.log('Invalid command found: ', cmd);
     }
   });
@@ -202,12 +217,13 @@ const getVariantInfo = (line, variantNames, variants) => {
       variants[vn][action] = variants[vn][action] || [];
 
       variants[vn][action].push({
-        selector: action === 'useblockcode' ? line[vn]?.split('/').pop() : normalizePath(selector),
+        selector: normalizePath(selector),
         val: normalizePath(line[vn]),
       });
     } else if (VALID_COMMANDS.includes(action)) {
       variants[vn].commands.push(variantInfo);
     } else {
+      /* c8 ignore next 2 */
       console.log('Invalid action found: ', line);
     }
   });
@@ -234,11 +250,13 @@ export function parseConfig(data) {
     config.variantNames = variantNames;
     return config;
   } catch (e) {
+    /* c8 ignore next 3 */
     console.log('error parsing personalization config:', e, experiences);
   }
   return null;
 }
 
+/* c8 ignore start */
 function parsePlaceholders(placeholders, config, selectedVariantName = '') {
   if (!placeholders?.length || selectedVariantName === 'no changes') return config;
   const valueNames = [
@@ -259,30 +277,133 @@ function parsePlaceholders(placeholders, config, selectedVariantName = '') {
   return config;
 }
 
-function getPersonalizationVariant(manifestPath, variantNames = [], variantLabel = null) {
-  const config = utils.getConfig();
-  let manifestFound = false;
+const fetchEntitlements = async () => {
+  const [{ default: getUserEntitlements }] = await Promise.all([
+    import('../../blocks/global-navigation/utilities/getUserEntitlements.js'),
+    loadIms(),
+  ]);
+  return getUserEntitlements();
+};
+
+const setEntLocalStorage = (ents) => {
+  localStorage.setItem(LS_ENT_KEY, JSON.stringify(ents));
+  localStorage.setItem(LS_ENT_EXPIRE_KEY, Date.now());
+};
+
+const loadEntsFromLocalStorage = () => {
+  const ents = localStorage.getItem(LS_ENT_KEY);
+  const expireDate = localStorage.getItem(LS_ENT_EXPIRE_KEY);
+  const now = Date.now();
+  if (!ents || !expireDate || (now - expireDate) > ENT_CACHE_EXPIRE) return null;
+  if ((now - expireDate) > ENT_CACHE_REFRESH) {
+    // refresh entitlements in background
+    setTimeout(() => {
+      fetchEntitlements().then((newEnts) => {
+        setEntLocalStorage(newEnts);
+      });
+    }, 5000);
+  }
+  return JSON.parse(ents);
+};
+
+const clearEntLocalStorage = () => {
+  localStorage.removeItem(LS_ENT_KEY);
+  localStorage.removeItem(LS_ENT_EXPIRE_KEY);
+};
+
+export const getEntitlements = (() => {
+  let ents;
+  let logoutEventSet;
+  return (async () => {
+    if (window.adobeIMS && !window.adobeIMS.isSignedInUser()) {
+      clearEntLocalStorage();
+      return {};
+    }
+    if (!ents) {
+      ents = loadEntsFromLocalStorage();
+    }
+    if (!ents) {
+      ents = await fetchEntitlements();
+      setEntLocalStorage(ents);
+    }
+    if (!logoutEventSet) {
+      window.addEventListener('feds:signOut', clearEntLocalStorage);
+      logoutEventSet = true;
+    }
+    return ents;
+  });
+})();
+
+const getFlatEntitlements = async () => {
+  const ents = await getEntitlements();
+  return {
+    ...ents.arrangement_codes,
+    ...ents.clouds,
+    ...ents.fulfilled_codes,
+  };
+};
+
+const checkForEntitlementMatch = (name, entitlements) => {
+  const entName = name.split('ent-')[1];
+  if (!entName) return false;
+  return entitlements[entName];
+};
+/* c8 ignore stop */
+
+const checkForParamMatch = (paramStr) => {
+  const [name, val] = paramStr.split('param-')[1].split('=');
+  if (!name) return false;
+  const searchParamVal = PAGE_URL.searchParams.get(name);
+  if (searchParamVal !== null) {
+    if (val) return val === searchParamVal;
+    return true; // if no val is set, just check for existence of param
+  }
+  return false;
+};
+
+async function getPersonalizationVariant(manifestPath, variantNames = [], variantLabel = null) {
+  const config = getConfig();
   if (config.mep?.override !== '') {
-    config.mep?.override.split(',').forEach((item) => {
+    let manifest;
+    /* c8 ignore start */
+    config.mep?.override.split(',').some((item) => {
       const pair = item.trim().split('--');
       if (pair[0] === manifestPath && pair.length > 1) {
-        // eslint-disable-next-line prefer-destructuring
-        manifestFound = pair[1];
+        [, manifest] = pair;
+        return true;
       }
+      return false;
     });
-    if (manifestFound) return manifestFound;
+    /* c8 ignore stop */
+    if (manifest) return manifest;
   }
 
-  const tagNames = Object.keys(PERSONALIZATION_TAGS);
-  const matchingVariant = variantNames.find((variant) => {
-    // handle multiple variants that are space / comma delimited
-    const names = variant.split(',').map((v) => v.trim()).filter(Boolean);
-    return names.some((name) => {
-      if (name === variantLabel) return true;
-      if (name.startsWith('param-')) return checkForParamMatch(name);
-      return tagNames.includes(name) && PERSONALIZATION_TAGS[name]();
-    });
-  });
+  const variantInfo = variantNames.reduce((acc, name) => {
+    const vNames = name.split(',').map((v) => v.trim()).filter(Boolean);
+    acc[name] = vNames;
+    acc.allNames = [...acc.allNames, ...vNames];
+    return acc;
+  }, { allNames: [] });
+
+  const hasEntitlementPrefix = variantInfo.allNames.some((name) => name.startsWith('ent-'));
+  const hasEntitlementTag = entitlementKeys.some((tag) => variantInfo.allNames.includes(tag));
+
+  let entitlements = {};
+  if (hasEntitlementPrefix || hasEntitlementTag) {
+    entitlements = await getFlatEntitlements();
+  }
+
+  const matchVariant = (name) => {
+    if (name === variantLabel) return true;
+    if (name.startsWith('param-')) return checkForParamMatch(name);
+    if (name.startsWith('ent-')) return checkForEntitlementMatch(name, entitlements);
+    if (entitlementKeys.includes(name)) {
+      return ENTITLEMENT_TAGS[name](entitlements);
+    }
+    return personalizationKeys.includes(name) && PERSONALIZATION_TAGS[name]();
+  };
+
+  const matchingVariant = variantNames.find((variant) => variantInfo[variant].some(matchVariant));
   return matchingVariant;
 }
 
@@ -298,15 +419,16 @@ export async function getPersConfig(name, variantLabel, manifestData, manifestPa
   }
 
   const persData = data?.data || data?.experiences?.data || data?.experiments?.data;
-  if (!persData) return {};
+  if (!persData) return null;
   const config = parseConfig(persData);
 
   if (!config) {
+    /* c8 ignore next 3 */
     console.log('Error loading personalization config: ', name || manifestPath);
-    return {};
+    return null;
   }
 
-  const selectedVariantName = getPersonalizationVariant(
+  const selectedVariantName = await getPersonalizationVariant(
     manifestPath,
     config.variantNames,
     variantLabel,
@@ -322,8 +444,8 @@ export async function getPersConfig(name, variantLabel, manifestData, manifestPa
   }
 
   if (placeholders) {
-    utils.updateConfig(
-      parsePlaceholders(placeholders, utils.getConfig(), config.selectedVariantName),
+    updateConfig(
+      parsePlaceholders(placeholders, getConfig(), config.selectedVariantName),
     );
   }
 
@@ -332,74 +454,10 @@ export async function getPersConfig(name, variantLabel, manifestData, manifestPa
   return config;
 }
 
-const getFPInfo = (fpTableRows) => {
-  const names = [];
-  const info = [...fpTableRows].reduce((infoObj, row) => {
-    const [actionEl, selectorEl, variantEl, fragment] = row.children;
-    if (actionEl?.innerText?.toLowerCase() === 'action') {
-      return infoObj;
-    }
-    const variantName = variantEl?.innerText?.toLowerCase();
-    if (!names.includes(variantName)) {
-      names.push(variantName);
-      infoObj[variantName] = [];
-    }
-    infoObj[variantName].push({
-      action: actionEl.innerText?.toLowerCase(),
-      selector: selectorEl.innerText?.toLowerCase(),
-      htmlFragment: fragment.firstElementChild,
-    });
-    return infoObj;
-  }, {});
-  return { info, names };
-};
-
-const modifyFragment = (selectedEl, action, htmlFragment, manifestId) => {
-  htmlFragment.dataset.manifestId = manifestId;
-  switch (action) {
-    case 'replace': case 'replacecontent':
-      selectedEl.replaceWith(htmlFragment);
-      break;
-    case 'insertbefore': case 'insertcontentbefore':
-      selectedEl.insertAdjacentElement('beforebegin', htmlFragment);
-      break;
-    case 'insertafter': case 'insertcontentafter':
-      selectedEl.insertAdjacentElement('afterend', htmlFragment);
-      break;
-    case 'remove': case 'removecontent':
-      selectedEl.insertAdjacentElement('beforebegin', utils.createTag('div', { 'data-remove-manifest-id': manifestId }));
-      selectedEl.remove();
-      break;
-    default:
-      console.warn(`Unknown action: ${action}`);
-  }
-};
-
 const deleteMarkedEls = () => {
   [...document.querySelectorAll(`.${CLASS_EL_DELETE}`)]
     .forEach((el) => el.remove());
 };
-
-export async function fragmentPersonalization(el) {
-  const fpTable = el.querySelector('div.fragment-personalization');
-  if (!fpTable) return el;
-  const fpTableRows = fpTable.querySelectorAll(':scope > div');
-
-  const { info, names } = getFPInfo(fpTableRows);
-  fpTable.remove();
-
-  const manifestId = 'fragment-personalization';
-  const selectedVariant = getPersonalizationVariant(manifestId, names);
-  if (!selectedVariant) return el;
-
-  info[selectedVariant].forEach((cmd) => {
-    const selectedEl = el.querySelector(cmd.selector);
-    if (!selectedEl) return;
-    modifyFragment(selectedEl, cmd.action, cmd.htmlFragment, manifestId);
-  });
-
-  return el;
-}
 
 const normalizeFragPaths = ({ selector, val }) => ({
   selector: normalizePath(selector),
@@ -416,6 +474,8 @@ export async function runPersonalization(info, config) {
 
   const experiment = await getPersConfig(name, variantLabel, manifestData, manifestPath);
 
+  if (!experiment) return null;
+
   const { selectedVariant } = experiment;
   if (!selectedVariant) return {};
   if (selectedVariant === 'no changes') {
@@ -428,7 +488,7 @@ export async function runPersonalization(info, config) {
     document.querySelector('main').dataset.manifestId = manifestPath;
   }
 
-  selectedVariant.insertscript?.map((script) => utils.loadScript(script.val));
+  selectedVariant.insertscript?.map((script) => loadScript(script.val));
   selectedVariant.updatemetadata?.map((metadata) => setMetadata(metadata));
 
   let manifestId = experiment.manifest;
@@ -469,15 +529,23 @@ function cleanManifestList(manifests) {
   return cleanedList;
 }
 
-export async function applyPers(
-  manifests,
-  utilities,
-) {
-  if (!manifests?.length) return;
-  const cleanedManifests = cleanManifestList(manifests);
+const decoratePreviewCheck = async (config, experiments) => {
+  if (config.mep?.preview) {
+    const { default: decoratePreviewMode } = await import('./preview.js');
+    decoratePreviewMode(experiments);
+  }
+};
 
-  utils = utilities;
-  const config = utils.getConfig();
+export async function applyPers(manifests) {
+  const config = getConfig();
+
+  if (!manifests?.length) {
+    decoratePreviewCheck(config, []);
+    return;
+  }
+
+  getEntitlements();
+  const cleanedManifests = cleanManifestList(manifests);
 
   let results = [];
   for (const manifest of cleanedManifests) {
@@ -487,15 +555,12 @@ export async function applyPers(
   deleteMarkedEls();
 
   const experiments = results.map((r) => r.experiment);
-  utils.updateConfig({
+  updateConfig({
     ...config,
     experiments,
     expBlocks: consolidateObjects(results, 'blocks'),
     expFragments: consolidateObjects(results, 'fragments'),
   });
 
-  if (config.mep?.preview) {
-    const { default: decoratePreviewMode } = await import('./preview.js');
-    decoratePreviewMode(experiments, utils);
-  }
+  decoratePreviewCheck(config, experiments);
 }
