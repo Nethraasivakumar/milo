@@ -12,7 +12,7 @@
 /* global */
 import { getUrlInfo } from './utils.js';
 
-const LOC_CONFIG = '/drafts/localization/configs/config.json';
+const LOC_CONFIG = '/drafts/localization/configs/config-stage.json';
 const DEFAULT_WORKFLOW = 'Standard';
 const GRAPH_API = 'https://graph.microsoft.com/v1.0';
 
@@ -108,6 +108,8 @@ function getSharepointConfig(config) {
   // ${sharepointConfig.site} - MS Graph API Url with site pointers.
   const baseURI = `${sharepointConfig.site}${drive}/root:${sharepointConfig.rootFolders}`;
   const fgBaseURI = `${sharepointConfig.site}${drive}/root:${sharepointConfig.fgRootFolder}`;
+  const baseItemsURI = `${sharepointConfig.site}${drive}/items`;
+  const fgBaseItemsURI = `${sharepointConfig.site}${drive}/items`;
   return {
     ...sharepointConfig,
     clientApp: {
@@ -162,9 +164,10 @@ function getSharepointConfig(config) {
         },
       },
       excel: {
+        get: { baseItemsURI, fgBaseItemsURI },
         update: {
-          baseURI,
-          fgBaseURI,
+          baseItemsURI,
+          fgBaseItemsURI,
           method: 'POST',
         },
       },
